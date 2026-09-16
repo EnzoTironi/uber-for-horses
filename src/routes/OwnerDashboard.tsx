@@ -98,7 +98,7 @@ function IdentityPanel() {
           className="btn btn-primary"
           disabled={createOwner.isPending}
         >
-          {createOwner.isPending ? "Creating…" : "Create owner &amp; continue"}
+          {createOwner.isPending ? "Creating…" : "Create owner & continue"}
         </button>
       </form>
 

@@ -38,7 +38,7 @@ export function Layout({ children }: { children: ReactNode }) {
       <header className={styles.nav}>
         <Link to="/" className={styles["nav-brand"]}>
           <HorseshoeMark />
-          Paddock &amp; Rein
+          Paddock & Rein
         </Link>
         <nav className={styles["nav-links"]}>
           <NavLink to="/">Search</NavLink>
@@ -47,7 +47,7 @@ export function Layout({ children }: { children: ReactNode }) {
       </header>
       <main className={styles.main}>{children}</main>
       <footer className={styles.footer}>
-        Paddock &amp; Rein — booking horses and carriages, one pasture at a
+        Paddock & Rein — booking horses and carriages, one pasture at a
         time.
       </footer>
     </div>

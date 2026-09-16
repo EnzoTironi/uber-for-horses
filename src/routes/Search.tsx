@@ -104,7 +104,7 @@ export function SearchPage() {
             Use my location
           </button>
           <button type="submit" className="btn btn-primary">
-            Find horses &amp; carriages
+            Find horses & carriages
           </button>
           {formError ? (
             <p className={styles["form-error"]}>{formError}</p>
