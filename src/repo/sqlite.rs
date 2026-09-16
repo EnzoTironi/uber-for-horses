@@ -9,8 +9,9 @@ use crate::error::AppError;
 use crate::repo::traits::{BookingRepo, ListingRepo, OwnerRepo, RiderRepo};
 
 pub async fn init_pool(database_url: &str) -> Result<SqlitePool, sqlx::Error> {
+    // SQLite has a single writer; 10 connections balances read concurrency without excessive contention.
     let pool = SqlitePoolOptions::new()
-        .max_connections(5)
+        .max_connections(10)
         .connect(database_url)
         .await?;
     run_migrations(&pool).await?;
@@ -91,6 +92,38 @@ async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         );
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        CREATE INDEX IF NOT EXISTS idx_listings_active_lat_lng ON listings(active, lat, lng);
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        CREATE INDEX IF NOT EXISTS idx_listings_owner_id ON listings(owner_id);
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        CREATE INDEX IF NOT EXISTS idx_bookings_listing_id ON bookings(listing_id);
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        CREATE INDEX IF NOT EXISTS idx_bookings_rider_id ON bookings(rider_id);
         "#,
     )
     .execute(pool)
