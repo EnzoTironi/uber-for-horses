@@ -25,6 +25,11 @@ impl OwnerRepo for InMemoryOwnerRepo {
         let data = self.data.lock().unwrap();
         Ok(data.get(&id).cloned())
     }
+
+    async fn find_by_email(&self, email: &str) -> Result<Option<Owner>, AppError> {
+        let data = self.data.lock().unwrap();
+        Ok(data.values().find(|o| o.email == email).cloned())
+    }
 }
 
 #[derive(Default)]
@@ -43,6 +48,11 @@ impl RiderRepo for InMemoryRiderRepo {
     async fn get(&self, id: Uuid) -> Result<Option<Rider>, AppError> {
         let data = self.data.lock().unwrap();
         Ok(data.get(&id).cloned())
+    }
+
+    async fn find_by_email(&self, email: &str) -> Result<Option<Rider>, AppError> {
+        let data = self.data.lock().unwrap();
+        Ok(data.values().find(|r| r.email == email).cloned())
     }
 }
 

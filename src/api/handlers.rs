@@ -9,7 +9,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::domain::AnimalKind;
+use crate::auth::jwt::{self, AuthIdentity};
+use crate::domain::{AnimalKind, Role};
 use crate::error::AppError;
 use crate::service::{BookingService, ListingService, OwnerService, RiderService};
 
@@ -23,6 +24,8 @@ pub struct AppState {
 
 pub fn router(state: AppState) -> Router {
     Router::new()
+        .route("/auth/signup", post(signup))
+        .route("/auth/login", post(login))
         .route("/owners", post(create_owner))
         .route("/owners/:id", get(get_owner))
         .route("/riders", post(create_rider))
@@ -45,12 +48,93 @@ pub fn router(state: AppState) -> Router {
         .with_state(state)
 }
 
+// ---------- Auth ----------
+
+#[derive(Deserialize)]
+struct SignupRequest {
+    name: String,
+    email: String,
+    password: String,
+    role: Role,
+}
+
+#[derive(Serialize)]
+struct TokenResponse {
+    token: String,
+}
+
+async fn signup(
+    State(state): State<AppState>,
+    Json(req): Json<SignupRequest>,
+) -> Result<Json<TokenResponse>, AppError> {
+    let (id, role) = match req.role {
+        Role::Owner => {
+            let owner = state
+                .owner_service
+                .create_owner(req.name, req.email, req.password)
+                .await?;
+            (owner.id, Role::Owner)
+        }
+        Role::Rider => {
+            let rider = state
+                .rider_service
+                .create_rider(req.name, req.email, req.password)
+                .await?;
+            (rider.id, Role::Rider)
+        }
+    };
+
+    let token = jwt::issue_token(id, role)?;
+    Ok(Json(TokenResponse { token }))
+}
+
+#[derive(Deserialize)]
+struct LoginRequest {
+    email: String,
+    password: String,
+    role: Role,
+}
+
+async fn login(
+    State(state): State<AppState>,
+    Json(req): Json<LoginRequest>,
+) -> Result<Json<TokenResponse>, AppError> {
+    let (id, password_hash, role) = match req.role {
+        Role::Owner => {
+            let owner = state
+                .owner_service
+                .find_by_email(&req.email)
+                .await?
+                .ok_or_else(|| AppError::Unauthorized("invalid email or password".into()))?;
+            (owner.id, owner.password_hash, Role::Owner)
+        }
+        Role::Rider => {
+            let rider = state
+                .rider_service
+                .find_by_email(&req.email)
+                .await?
+                .ok_or_else(|| AppError::Unauthorized("invalid email or password".into()))?;
+            (rider.id, rider.password_hash, Role::Rider)
+        }
+    };
+
+    let valid = bcrypt::verify(&req.password, &password_hash)
+        .map_err(|e| AppError::Internal(format!("failed to verify password: {e}")))?;
+    if !valid {
+        return Err(AppError::Unauthorized("invalid email or password".into()));
+    }
+
+    let token = jwt::issue_token(id, role)?;
+    Ok(Json(TokenResponse { token }))
+}
+
 // ---------- Owners ----------
 
 #[derive(Deserialize)]
 struct CreateOwnerRequest {
     name: String,
     email: String,
+    password: String,
 }
 
 async fn create_owner(
@@ -59,7 +143,7 @@ async fn create_owner(
 ) -> Result<Json<serde_json::Value>, AppError> {
     let owner = state
         .owner_service
-        .create_owner(req.name, req.email)
+        .create_owner(req.name, req.email, req.password)
         .await?;
     Ok(Json(serde_json::to_value(owner).unwrap()))
 }
@@ -78,6 +162,7 @@ async fn get_owner(
 struct CreateRiderRequest {
     name: String,
     email: String,
+    password: String,
 }
 
 async fn create_rider(
@@ -86,7 +171,7 @@ async fn create_rider(
 ) -> Result<Json<serde_json::Value>, AppError> {
     let rider = state
         .rider_service
-        .create_rider(req.name, req.email)
+        .create_rider(req.name, req.email, req.password)
         .await?;
     Ok(Json(serde_json::to_value(rider).unwrap()))
 }
@@ -115,8 +200,14 @@ struct CreateListingRequest {
 
 async fn create_listing(
     State(state): State<AppState>,
+    identity: AuthIdentity,
     Json(req): Json<CreateListingRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    if identity.role != Role::Owner {
+        return Err(AppError::Forbidden(
+            "only owners can create listings".into(),
+        ));
+    }
     let listing = state
         .listing_service
         .create_listing(
@@ -234,19 +325,19 @@ async fn get_booking(
     Ok(Json(serde_json::to_value(booking).unwrap()))
 }
 
-#[derive(Deserialize)]
-struct ActorQuery {
-    actor_id: Uuid,
-}
-
 async fn confirm_booking(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
-    Query(q): Query<ActorQuery>,
+    identity: AuthIdentity,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    if identity.role != Role::Owner {
+        return Err(AppError::Forbidden(
+            "only owners can confirm bookings".into(),
+        ));
+    }
     let booking = state
         .booking_service
-        .confirm_booking(id, q.actor_id)
+        .confirm_booking(id, identity.id)
         .await?;
     Ok(Json(serde_json::to_value(booking).unwrap()))
 }
@@ -254,11 +345,16 @@ async fn confirm_booking(
 async fn decline_booking(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
-    Query(q): Query<ActorQuery>,
+    identity: AuthIdentity,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    if identity.role != Role::Owner {
+        return Err(AppError::Forbidden(
+            "only owners can decline bookings".into(),
+        ));
+    }
     let booking = state
         .booking_service
-        .decline_booking(id, q.actor_id)
+        .decline_booking(id, identity.id)
         .await?;
     Ok(Json(serde_json::to_value(booking).unwrap()))
 }
@@ -266,20 +362,30 @@ async fn decline_booking(
 async fn cancel_booking(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
-    Query(q): Query<ActorQuery>,
+    identity: AuthIdentity,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let booking = state.booking_service.cancel_booking(id, q.actor_id).await?;
+    // Both owners and riders can cancel; ownership/rider-match is enforced in
+    // the service layer using the verified identity.
+    let booking = state
+        .booking_service
+        .cancel_booking(id, identity.id)
+        .await?;
     Ok(Json(serde_json::to_value(booking).unwrap()))
 }
 
 async fn complete_booking(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
-    Query(q): Query<ActorQuery>,
+    identity: AuthIdentity,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    if identity.role != Role::Owner {
+        return Err(AppError::Forbidden(
+            "only owners can complete bookings".into(),
+        ));
+    }
     let booking = state
         .booking_service
-        .complete_booking(id, q.actor_id)
+        .complete_booking(id, identity.id)
         .await?;
     Ok(Json(serde_json::to_value(booking).unwrap()))
 }
