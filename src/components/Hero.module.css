@@ -67,6 +67,105 @@
   padding: 3rem 2.5rem 4.5rem;
 }
 
+/* ---- Floating collage accents ----
+   A loose, slightly-tilted cluster of small mockup cards layered over the
+   hero photo — kept to the upper-right quadrant so they never collide with
+   the search card, which anchors bottom-left under the headline. */
+.floating-collage {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.collage-card {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  background: rgba(255, 253, 249, 0.96);
+  border-radius: var(--radius-md);
+  box-shadow: 0 16px 34px -14px rgba(20, 14, 6, 0.4);
+  padding: 0.7rem 0.95rem;
+  font-family: var(--font-body);
+}
+
+.collage-booking {
+  top: 8%;
+  right: 7%;
+  animation: collage-float-a 7s var(--ease-elegant) infinite alternate;
+}
+
+.collage-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--color-moss);
+  color: var(--color-white);
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.collage-card-title {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--color-ink);
+  line-height: 1.2;
+}
+
+.collage-card-sub {
+  font-size: 0.72rem;
+  color: var(--color-ink-soft);
+  line-height: 1.2;
+  margin-top: 0.1rem;
+}
+
+.collage-badge {
+  position: absolute;
+  padding: 0.45rem 0.9rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  box-shadow: 0 12px 26px -12px rgba(20, 14, 6, 0.4);
+  white-space: nowrap;
+}
+
+.collage-distance {
+  top: 30%;
+  right: 3%;
+  background: var(--color-white);
+  color: var(--color-ink-soft);
+  animation: collage-float-b 8s var(--ease-elegant) infinite alternate-reverse;
+}
+
+@keyframes collage-float-a {
+  0% {
+    transform: rotate(-4deg) translate3d(0, 0, 0);
+  }
+  100% {
+    transform: rotate(-4deg) translate3d(0, -8px, 0);
+  }
+}
+
+@keyframes collage-float-b {
+  0% {
+    transform: rotate(3deg) translate3d(0, 0, 0);
+  }
+  100% {
+    transform: rotate(3deg) translate3d(0, -8px, 0);
+  }
+}
+
+@media (max-width: 1080px) {
+  .floating-collage {
+    display: none;
+  }
+}
+
 .hero-eyebrow {
   display: inline-flex;
   align-items: center;

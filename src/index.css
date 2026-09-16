@@ -105,7 +105,7 @@ textarea {
   justify-content: center;
   gap: 0.5rem;
   border: none;
-  border-radius: var(--radius-sm);
+  border-radius: 999px;
   padding: 0.75rem 1.5rem;
   font-size: 0.95rem;
   font-weight: 600;

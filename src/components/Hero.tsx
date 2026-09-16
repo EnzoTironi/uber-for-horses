@@ -5,6 +5,21 @@ export function Hero({ children }: { children?: ReactNode }) {
   return (
     <section className={styles.hero}>
       <div className={styles["hero-bg"]} aria-hidden="true" />
+
+      <div className={styles["floating-collage"]} aria-hidden="true">
+        <div className={`${styles["collage-card"]} ${styles["collage-booking"]}`}>
+          <span className={styles["collage-check"]}>✓</span>
+          <div>
+            <p className={styles["collage-card-title"]}>Booking confirmed</p>
+            <p className={styles["collage-card-sub"]}>Snowball · Sat, 6:00 PM</p>
+          </div>
+        </div>
+
+        <div className={`${styles["collage-badge"]} ${styles["collage-distance"]}`}>
+          2.3 km away
+        </div>
+      </div>
+
       <div className={styles["hero-content"]}>
         <p className={styles["hero-eyebrow"]}>Uber for horses</p>
         <h1 className={styles["hero-title"]}>
@@ -13,9 +28,8 @@ export function Hero({ children }: { children?: ReactNode }) {
           straight from <em>the pasture</em>.
         </h1>
         <p className={styles["hero-subtitle"]}>
-          Trail rides, wedding carriages, riding lessons — find a trusted
-          horse or carriage near you, see real availability, and request your
-          slot in minutes.
+          Find a trusted horse or carriage near you, see{" "}
+          <em>real availability</em>, and request your slot in minutes.
         </p>
         {children ? (
           <div className={styles["hero-card"]}>{children}</div>

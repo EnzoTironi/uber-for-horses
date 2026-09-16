@@ -124,7 +124,7 @@ function IdentityPanel() {
               padding: "0.55rem 0.75rem",
             }}
           />
-          <button type="submit" className="btn btn-secondary btn-small">
+          <button type="submit" className="btn btn-ghost btn-small">
             Use id
           </button>
         </form>
@@ -198,8 +198,8 @@ export function OwnerDashboardPage() {
       <div className={styles.header}>
         <h1 className={styles.title}>Owner dashboard</h1>
         <p className={styles.subtitle}>
-          Review booking requests for your horses and carriages, and confirm
-          or decline them.
+          Review booking requests for your horses and carriages, and{" "}
+          <em>confirm or decline them</em> in a couple of taps.
         </p>
       </div>
 

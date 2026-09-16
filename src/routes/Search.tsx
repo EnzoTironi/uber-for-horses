@@ -98,7 +98,7 @@ export function SearchPage() {
           </div>
           <button
             type="button"
-            className={`btn btn-secondary ${styles["locate-btn"]}`}
+            className={`btn btn-ghost ${styles["locate-btn"]}`}
             onClick={handleLocate}
           >
             Use my location

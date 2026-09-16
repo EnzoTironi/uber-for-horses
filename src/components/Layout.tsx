@@ -35,16 +35,18 @@ function NavLink({ to, children }: { to: string; children: ReactNode }) {
 export function Layout({ children }: { children: ReactNode }) {
   return (
     <div className={styles.layout}>
-      <header className={styles.nav}>
-        <Link to="/" className={styles["nav-brand"]}>
-          <HorseshoeMark />
-          Paddock & Rein
-        </Link>
-        <nav className={styles["nav-links"]}>
-          <NavLink to="/">Search</NavLink>
-          <NavLink to="/owner">Owner dashboard</NavLink>
-        </nav>
-      </header>
+      <div className={styles["nav-wrap"]}>
+        <header className={styles.nav}>
+          <Link to="/" className={styles["nav-brand"]}>
+            <HorseshoeMark />
+            <span>Paddock & Rein</span>
+          </Link>
+          <nav className={styles["nav-links"]}>
+            <NavLink to="/">Search</NavLink>
+            <NavLink to="/owner">Owner dashboard</NavLink>
+          </nav>
+        </header>
+      </div>
       <main className={styles.main}>{children}</main>
       <footer className={styles.footer}>
         Paddock & Rein — booking horses and carriages, one pasture at a
