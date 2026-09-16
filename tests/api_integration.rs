@@ -54,6 +54,15 @@ fn get_req(uri: &str) -> Request<Body> {
         .unwrap()
 }
 
+fn get_req_auth(uri: &str, token: &str) -> Request<Body> {
+    Request::builder()
+        .method("GET")
+        .uri(uri)
+        .header("authorization", format!("Bearer {token}"))
+        .body(Body::empty())
+        .unwrap()
+}
+
 /// Sign up a new owner (via /auth/signup) and return (owner_id, token).
 async fn signup_owner(
     app: &axum::Router,
@@ -175,14 +184,15 @@ async fn happy_path_full_booking_lifecycle() {
     let listing_id = listing["id"].as_str().unwrap().to_string();
     assert_eq!(listing["active"], json!(true));
 
-    // 3. Add a time slot (2 hours)
+    // 3. Add a time slot (2 hours) — owner-authenticated.
     let start_at = Utc::now() + Duration::days(1);
     let end_at = start_at + Duration::hours(2);
     let resp = app
         .clone()
-        .oneshot(post_req(
+        .oneshot(post_req_auth(
             &format!("/listings/{listing_id}/slots"),
             json!({ "start_at": start_at, "end_at": end_at }),
+            &owner_token,
         ))
         .await
         .unwrap();
@@ -192,7 +202,7 @@ async fn happy_path_full_booking_lifecycle() {
     assert_eq!(slot["is_booked"], json!(false));
 
     // 4. Sign up rider
-    let (rider_id, _rider_token) =
+    let (rider_id, rider_token) =
         signup_rider(&app, "Bob Rider", "bob@example.com", "swordfish").await;
 
     // 5. search_nearby finds the listing (Oakland is ~13km from SF)
@@ -222,17 +232,18 @@ async fn happy_path_full_booking_lifecycle() {
     let results = body_json(resp).await;
     assert_eq!(results.as_array().unwrap().len(), 0);
 
-    // 6. Rider creates booking -> status Requested
+    // 6. Rider creates booking -> status Requested (rider-authenticated, rider_id
+    // comes from the token, not the request body).
     let resp = app
         .clone()
-        .oneshot(post_req(
+        .oneshot(post_req_auth(
             "/bookings",
             json!({
                 "listing_id": listing_id,
-                "rider_id": rider_id,
                 "time_slot_id": slot_id,
                 "message_from_rider": "Excited for the ride!"
             }),
+            &rider_token,
         ))
         .await
         .unwrap();
@@ -301,7 +312,10 @@ async fn happy_path_full_booking_lifecycle() {
     // Rider's booking history includes this booking.
     let resp = app
         .clone()
-        .oneshot(get_req(&format!("/riders/{rider_id}/bookings")))
+        .oneshot(get_req_auth(
+            &format!("/riders/{rider_id}/bookings"),
+            &rider_token,
+        ))
         .await
         .unwrap();
     let rider_bookings = body_json(resp).await;
@@ -310,7 +324,10 @@ async fn happy_path_full_booking_lifecycle() {
     // Owner's booking history includes this booking.
     let resp = app
         .clone()
-        .oneshot(get_req(&format!("/owners/{owner_id}/bookings")))
+        .oneshot(get_req_auth(
+            &format!("/owners/{owner_id}/bookings"),
+            &owner_token,
+        ))
         .await
         .unwrap();
     let owner_bookings = body_json(resp).await;
@@ -350,9 +367,10 @@ async fn booking_an_already_booked_slot_returns_conflict() {
     let end_at = start_at + Duration::hours(1);
     let slot = body_json(
         app.clone()
-            .oneshot(post_req(
+            .oneshot(post_req_auth(
                 &format!("/listings/{listing_id}/slots"),
                 json!({ "start_at": start_at, "end_at": end_at }),
+                &owner_token,
             ))
             .await
             .unwrap(),
@@ -360,22 +378,22 @@ async fn booking_an_already_booked_slot_returns_conflict() {
     .await;
     let slot_id = slot["id"].as_str().unwrap().to_string();
 
-    let (rider1_id, _rider1_token) =
+    let (_rider1_id, rider1_token) =
         signup_rider(&app, "Rider1", "rider1@example.com", "pw-rider1").await;
-    let (rider2_id, _rider2_token) =
+    let (_rider2_id, rider2_token) =
         signup_rider(&app, "Rider2", "rider2@example.com", "pw-rider2").await;
 
     // Rider1 books and owner confirms -> slot becomes booked.
     let booking1 = body_json(
         app.clone()
-            .oneshot(post_req(
+            .oneshot(post_req_auth(
                 "/bookings",
                 json!({
                     "listing_id": listing_id,
-                    "rider_id": rider1_id,
                     "time_slot_id": slot_id,
                     "message_from_rider": null
                 }),
+                &rider1_token,
             ))
             .await
             .unwrap(),
@@ -397,14 +415,14 @@ async fn booking_an_already_booked_slot_returns_conflict() {
     // Rider2 tries to book the now-confirmed (booked) slot -> Conflict.
     let resp = app
         .clone()
-        .oneshot(post_req(
+        .oneshot(post_req_auth(
             "/bookings",
             json!({
                 "listing_id": listing_id,
-                "rider_id": rider2_id,
                 "time_slot_id": slot_id,
                 "message_from_rider": null
             }),
+            &rider2_token,
         ))
         .await
         .unwrap();
@@ -418,9 +436,10 @@ async fn booking_an_already_booked_slot_returns_conflict() {
     let end_at2 = start_at2 + Duration::hours(1);
     let slot2 = body_json(
         app.clone()
-            .oneshot(post_req(
+            .oneshot(post_req_auth(
                 &format!("/listings/{listing_id}/slots"),
                 json!({ "start_at": start_at2, "end_at": end_at2 }),
+                &owner_token,
             ))
             .await
             .unwrap(),
@@ -430,14 +449,14 @@ async fn booking_an_already_booked_slot_returns_conflict() {
 
     let booking2 = body_json(
         app.clone()
-            .oneshot(post_req(
+            .oneshot(post_req_auth(
                 "/bookings",
                 json!({
                     "listing_id": listing_id,
-                    "rider_id": rider2_id,
                     "time_slot_id": slot2_id,
                     "message_from_rider": null
                 }),
+                &rider2_token,
             ))
             .await
             .unwrap(),
@@ -490,9 +509,10 @@ async fn cancel_confirmed_booking_frees_the_slot() {
     let end_at = start_at + Duration::hours(3);
     let slot = body_json(
         app.clone()
-            .oneshot(post_req(
+            .oneshot(post_req_auth(
                 &format!("/listings/{listing_id}/slots"),
                 json!({ "start_at": start_at, "end_at": end_at }),
+                &owner_token,
             ))
             .await
             .unwrap(),
@@ -500,19 +520,19 @@ async fn cancel_confirmed_booking_frees_the_slot() {
     .await;
     let slot_id = slot["id"].as_str().unwrap().to_string();
 
-    let (rider_id, rider_token) =
+    let (_rider_id, rider_token) =
         signup_rider(&app, "Rider3", "rider3@example.com", "pw-rider3").await;
 
     let booking = body_json(
         app.clone()
-            .oneshot(post_req(
+            .oneshot(post_req_auth(
                 "/bookings",
                 json!({
                     "listing_id": listing_id,
-                    "rider_id": rider_id,
                     "time_slot_id": slot_id,
                     "message_from_rider": null
                 }),
+                &rider_token,
             ))
             .await
             .unwrap(),
@@ -705,4 +725,171 @@ async fn rider_cannot_create_listing_returns_403() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn create_listing_ignores_spoofed_owner_id_in_body() {
+    // Regression test: owner_id must come from the verified token, never
+    // from client-supplied JSON — otherwise anyone with a valid owner token
+    // could create a listing "owned" by an arbitrary id.
+    let app = app();
+
+    let (owner_id, owner_token) =
+        signup_owner(&app, "Gary Owner", "gary@example.com", "pw-gary").await;
+
+    let spoofed_owner_id = Uuid::new_v4();
+    let resp = app
+        .clone()
+        .oneshot(post_req_auth(
+            "/listings",
+            json!({
+                "owner_id": spoofed_owner_id,
+                "kind": "horse",
+                "name": "Spoofed Listing",
+                "description": "desc",
+                "photo_url": "https://example.com/x.png",
+                "hourly_price_cents": 1000,
+                "lat": 0.0,
+                "lng": 0.0
+            }),
+            &owner_token,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let listing = body_json(resp).await;
+    // The listing must be owned by the authenticated caller, not the id in the body.
+    assert_eq!(listing["owner_id"], json!(owner_id));
+    assert_ne!(listing["owner_id"], json!(spoofed_owner_id.to_string()));
+}
+
+#[tokio::test]
+async fn create_booking_requires_authentication() {
+    // Regression test: booking creation must require a valid rider token —
+    // it must not accept a client-supplied rider_id with no auth at all.
+    let app = app();
+
+    let (owner_id, owner_token) =
+        signup_owner(&app, "Helen Owner", "helen@example.com", "pw-helen").await;
+    let listing = body_json(
+        app.clone()
+            .oneshot(post_req_auth(
+                "/listings",
+                json!({
+                    "owner_id": owner_id,
+                    "kind": "horse",
+                    "name": "Unbooked Horse",
+                    "description": "desc",
+                    "photo_url": "https://example.com/x.png",
+                    "hourly_price_cents": 1000,
+                    "lat": 0.0,
+                    "lng": 0.0
+                }),
+                &owner_token,
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    let listing_id = listing["id"].as_str().unwrap().to_string();
+
+    let start_at = Utc::now() + Duration::days(1);
+    let end_at = start_at + Duration::hours(1);
+    let slot = body_json(
+        app.clone()
+            .oneshot(post_req_auth(
+                &format!("/listings/{listing_id}/slots"),
+                json!({ "start_at": start_at, "end_at": end_at }),
+                &owner_token,
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    let slot_id = slot["id"].as_str().unwrap().to_string();
+
+    // No Authorization header at all -> must be rejected, not silently booked
+    // on behalf of whatever rider_id someone put in the JSON body.
+    let fake_rider_id = Uuid::new_v4();
+    let resp = app
+        .clone()
+        .oneshot(post_req(
+            "/bookings",
+            json!({
+                "listing_id": listing_id,
+                "rider_id": fake_rider_id,
+                "time_slot_id": slot_id,
+                "message_from_rider": "no auth"
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn cannot_view_another_users_booking_history() {
+    // Regression test: /riders/:id/bookings and /owners/:id/bookings must
+    // reject a caller trying to view someone else's booking history.
+    let app = app();
+
+    let (owner_id, owner_token) =
+        signup_owner(&app, "Ivan Owner", "ivan@example.com", "pw-ivan").await;
+    let (rider_id, rider_token) =
+        signup_rider(&app, "Judy Rider", "judy@example.com", "pw-judy").await;
+    let (_other_id, other_token) =
+        signup_rider(&app, "Mallory", "mallory@example.com", "pw-mallory").await;
+
+    // Mallory (a different, unrelated user) tries to read Judy's booking history.
+    let resp = app
+        .clone()
+        .oneshot(get_req_auth(
+            &format!("/riders/{rider_id}/bookings"),
+            &other_token,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    // Mallory tries to read Ivan's owner booking history too.
+    let resp = app
+        .clone()
+        .oneshot(get_req_auth(
+            &format!("/owners/{owner_id}/bookings"),
+            &other_token,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    // No token at all is also rejected.
+    let resp = app
+        .clone()
+        .oneshot(get_req(&format!("/riders/{rider_id}/bookings")))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+    // Judy can read her own history (sanity check the fix isn't overly broad).
+    let resp = app
+        .clone()
+        .oneshot(get_req_auth(
+            &format!("/riders/{rider_id}/bookings"),
+            &rider_token,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Owner token used on the /owners/:id/bookings path with the wrong id is
+    // also blocked even though it's a valid, correctly-signed owner token.
+    let resp = app
+        .clone()
+        .oneshot(get_req_auth(
+            &format!("/owners/{owner_id}/bookings"),
+            &owner_token,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
 }

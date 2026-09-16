@@ -188,7 +188,6 @@ async fn get_rider(
 
 #[derive(Deserialize)]
 struct CreateListingRequest {
-    owner_id: Uuid,
     kind: AnimalKind,
     name: String,
     description: String,
@@ -208,10 +207,13 @@ async fn create_listing(
             "only owners can create listings".into(),
         ));
     }
+    // owner_id is derived from the verified token, never trusted from the
+    // request body — otherwise any authenticated owner could create a
+    // listing "owned" by someone else's id.
     let listing = state
         .listing_service
         .create_listing(
-            req.owner_id,
+            identity.id,
             req.kind,
             req.name,
             req.description,
@@ -274,8 +276,18 @@ struct CreateTimeSlotRequest {
 async fn create_time_slot(
     State(state): State<AppState>,
     Path(listing_id): Path<Uuid>,
+    identity: AuthIdentity,
     Json(req): Json<CreateTimeSlotRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    if identity.role != Role::Owner {
+        return Err(AppError::Forbidden("only owners can add time slots".into()));
+    }
+    let listing = state.listing_service.get_listing(listing_id).await?;
+    if listing.owner_id != identity.id {
+        return Err(AppError::Forbidden(
+            "only the listing owner can add time slots to this listing".into(),
+        ));
+    }
     let slot = state
         .listing_service
         .add_time_slot(listing_id, req.start_at, req.end_at)
@@ -296,20 +308,28 @@ async fn list_time_slots(
 #[derive(Deserialize)]
 struct CreateBookingRequest {
     listing_id: Uuid,
-    rider_id: Uuid,
     time_slot_id: Uuid,
     message_from_rider: Option<String>,
 }
 
 async fn create_booking(
     State(state): State<AppState>,
+    identity: AuthIdentity,
     Json(req): Json<CreateBookingRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    if identity.role != Role::Rider {
+        return Err(AppError::Forbidden(
+            "only riders can request bookings".into(),
+        ));
+    }
+    // rider_id is derived from the verified token, never trusted from the
+    // request body — otherwise anyone could book (and rack up a bill) on
+    // behalf of an arbitrary rider_id, authenticated or not.
     let booking = state
         .booking_service
         .request_booking(
             req.listing_id,
-            req.rider_id,
+            identity.id,
             req.time_slot_id,
             req.message_from_rider,
         )
@@ -393,7 +413,13 @@ async fn complete_booking(
 async fn list_rider_bookings(
     State(state): State<AppState>,
     Path(rider_id): Path<Uuid>,
+    identity: AuthIdentity,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    if identity.id != rider_id {
+        return Err(AppError::Forbidden(
+            "you can only view your own booking history".into(),
+        ));
+    }
     let bookings = state.booking_service.list_by_rider(rider_id).await?;
     Ok(Json(serde_json::to_value(bookings).unwrap()))
 }
@@ -401,7 +427,13 @@ async fn list_rider_bookings(
 async fn list_owner_bookings(
     State(state): State<AppState>,
     Path(owner_id): Path<Uuid>,
+    identity: AuthIdentity,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    if identity.id != owner_id {
+        return Err(AppError::Forbidden(
+            "you can only view your own booking history".into(),
+        ));
+    }
     let bookings = state.booking_service.list_by_owner(owner_id).await?;
     Ok(Json(serde_json::to_value(bookings).unwrap()))
 }
