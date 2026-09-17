@@ -95,6 +95,7 @@ async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
             status TEXT NOT NULL,
             total_price_cents INTEGER NOT NULL,
             message_from_rider TEXT,
+            payment_hold_id TEXT,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         );
@@ -102,6 +103,15 @@ async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     )
     .execute(pool)
     .await?;
+
+    sqlx::query(
+        r#"
+        ALTER TABLE bookings ADD COLUMN payment_hold_id TEXT;
+        "#,
+    )
+    .execute(pool)
+    .await
+    .ok();
 
     sqlx::query(
         r#"
@@ -520,6 +530,7 @@ fn row_to_booking(r: sqlx::sqlite::SqliteRow) -> Booking {
         status: str_to_status(r.get::<String, _>("status").as_str()),
         total_price_cents: r.get("total_price_cents"),
         message_from_rider: r.get("message_from_rider"),
+        payment_hold_id: r.get("payment_hold_id"),
         created_at: DateTime::parse_from_rfc3339(r.get::<String, _>("created_at").as_str())
             .unwrap()
             .with_timezone(&Utc),
@@ -534,8 +545,8 @@ impl BookingRepo for SqliteBookingRepo {
     async fn create(&self, booking: Booking) -> Result<Booking, AppError> {
         sqlx::query(
             r#"INSERT INTO bookings
-            (id, listing_id, rider_id, time_slot_id, status, total_price_cents, message_from_rider, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+            (id, listing_id, rider_id, time_slot_id, status, total_price_cents, message_from_rider, payment_hold_id, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
         )
         .bind(booking.id.to_string())
         .bind(booking.listing_id.to_string())
@@ -544,6 +555,7 @@ impl BookingRepo for SqliteBookingRepo {
         .bind(status_to_str(booking.status))
         .bind(booking.total_price_cents)
         .bind(&booking.message_from_rider)
+        .bind(&booking.payment_hold_id)
         .bind(booking.created_at.to_rfc3339())
         .bind(booking.updated_at.to_rfc3339())
         .execute(&self.pool)
@@ -560,12 +572,15 @@ impl BookingRepo for SqliteBookingRepo {
     }
 
     async fn update(&self, booking: Booking) -> Result<Booking, AppError> {
-        sqlx::query("UPDATE bookings SET status = ?, updated_at = ? WHERE id = ?")
-            .bind(status_to_str(booking.status))
-            .bind(booking.updated_at.to_rfc3339())
-            .bind(booking.id.to_string())
-            .execute(&self.pool)
-            .await?;
+        sqlx::query(
+            "UPDATE bookings SET status = ?, payment_hold_id = ?, updated_at = ? WHERE id = ?",
+        )
+        .bind(status_to_str(booking.status))
+        .bind(&booking.payment_hold_id)
+        .bind(booking.updated_at.to_rfc3339())
+        .bind(booking.id.to_string())
+        .execute(&self.pool)
+        .await?;
         Ok(booking)
     }
 
