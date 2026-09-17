@@ -12,7 +12,7 @@ use uuid::Uuid;
 use crate::auth::jwt::{self, AuthIdentity};
 use crate::domain::{AnimalKind, Role};
 use crate::error::AppError;
-use crate::service::{BookingService, ListingService, OwnerService, RiderService};
+use crate::service::{BookingService, ListingService, OwnerService, ReviewService, RiderService};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -20,6 +20,7 @@ pub struct AppState {
     pub rider_service: Arc<RiderService>,
     pub listing_service: Arc<ListingService>,
     pub booking_service: Arc<BookingService>,
+    pub review_service: Arc<ReviewService>,
 }
 
 pub fn router(state: AppState) -> Router {
@@ -43,6 +44,7 @@ pub fn router(state: AppState) -> Router {
         .route("/bookings/:id/decline", post(decline_booking))
         .route("/bookings/:id/cancel", post(cancel_booking))
         .route("/bookings/:id/complete", post(complete_booking))
+        .route("/bookings/:id/reviews", post(create_review))
         .route("/riders/:rider_id/bookings", get(list_rider_bookings))
         .route("/owners/:owner_id/bookings", get(list_owner_bookings))
         .with_state(state)
@@ -270,7 +272,14 @@ async fn get_listing(
     Path(id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let listing = state.listing_service.get_listing(id).await?;
-    Ok(Json(serde_json::to_value(listing).unwrap()))
+    let (average_rating, review_count) =
+        state.review_service.rating_summary_for_listing(id).await?;
+    let response = ListingWithRatingResponse {
+        listing,
+        average_rating,
+        review_count,
+    };
+    Ok(Json(serde_json::to_value(response).unwrap()))
 }
 
 #[derive(Deserialize)]
@@ -281,9 +290,19 @@ struct SearchQuery {
 }
 
 #[derive(Serialize)]
+struct ListingWithRatingResponse {
+    #[serde(flatten)]
+    listing: crate::domain::Listing,
+    average_rating: Option<f64>,
+    review_count: i64,
+}
+
+#[derive(Serialize)]
 struct NearbyListingResponse {
     listing: crate::domain::Listing,
     distance_km: f64,
+    average_rating: Option<f64>,
+    review_count: i64,
 }
 
 async fn search_listings(
@@ -294,13 +313,19 @@ async fn search_listings(
         .listing_service
         .search_nearby(q.lat, q.lng, q.radius_km)
         .await?;
-    let response: Vec<NearbyListingResponse> = results
-        .into_iter()
-        .map(|nl| NearbyListingResponse {
+    let mut response: Vec<NearbyListingResponse> = Vec::with_capacity(results.len());
+    for nl in results {
+        let (average_rating, review_count) = state
+            .review_service
+            .rating_summary_for_listing(nl.listing.id)
+            .await?;
+        response.push(NearbyListingResponse {
             listing: nl.listing,
             distance_km: nl.distance_km,
-        })
-        .collect();
+            average_rating,
+            review_count,
+        });
+    }
     Ok(Json(serde_json::to_value(response).unwrap()))
 }
 
@@ -447,6 +472,33 @@ async fn complete_booking(
         .complete_booking(id, identity.id)
         .await?;
     Ok(Json(serde_json::to_value(booking).unwrap()))
+}
+
+// ---------- Reviews ----------
+
+#[derive(Deserialize)]
+struct CreateReviewRequest {
+    rating: i32,
+    comment: Option<String>,
+}
+
+async fn create_review(
+    State(state): State<AppState>,
+    Path(booking_id): Path<Uuid>,
+    identity: AuthIdentity,
+    Json(req): Json<CreateReviewRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    if identity.role != Role::Rider {
+        return Err(AppError::Forbidden("only riders can leave reviews".into()));
+    }
+    // rider_id is derived from the verified token, never trusted from the
+    // request body — the service layer additionally verifies it matches
+    // the booking's rider before allowing the review.
+    let review = state
+        .review_service
+        .create_review(booking_id, identity.id, req.rating, req.comment)
+        .await?;
+    Ok(Json(serde_json::to_value(review).unwrap()))
 }
 
 async fn list_rider_bookings(

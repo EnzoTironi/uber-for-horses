@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use uuid::Uuid;
 
-use crate::domain::{Booking, Listing, Owner, Rider, TimeSlot};
+use crate::domain::{Booking, Listing, Owner, Review, Rider, TimeSlot};
 use crate::error::AppError;
 
 #[async_trait]
@@ -39,4 +39,11 @@ pub trait BookingRepo: Send + Sync {
     async fn update(&self, booking: Booking) -> Result<Booking, AppError>;
     async fn list_by_rider(&self, rider_id: Uuid) -> Result<Vec<Booking>, AppError>;
     async fn list_by_owner(&self, owner_id: Uuid) -> Result<Vec<Booking>, AppError>;
+}
+
+#[async_trait]
+pub trait ReviewRepo: Send + Sync {
+    async fn create(&self, review: Review) -> Result<Review, AppError>;
+    async fn get_by_booking(&self, booking_id: Uuid) -> Result<Option<Review>, AppError>;
+    async fn list_for_listing(&self, listing_id: Uuid) -> Result<Vec<Review>, AppError>;
 }

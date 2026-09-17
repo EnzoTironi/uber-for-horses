@@ -4,9 +4,9 @@ use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::{Row, SqlitePool};
 use uuid::Uuid;
 
-use crate::domain::{AnimalKind, Booking, BookingStatus, Listing, Owner, Rider, TimeSlot};
+use crate::domain::{AnimalKind, Booking, BookingStatus, Listing, Owner, Review, Rider, TimeSlot};
 use crate::error::AppError;
-use crate::repo::traits::{BookingRepo, ListingRepo, OwnerRepo, RiderRepo};
+use crate::repo::traits::{BookingRepo, ListingRepo, OwnerRepo, ReviewRepo, RiderRepo};
 
 pub async fn init_pool(database_url: &str) -> Result<SqlitePool, sqlx::Error> {
     // SQLite has a single writer; 10 connections balances read concurrency without excessive contention.
@@ -130,6 +130,30 @@ async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     sqlx::query(
         r#"
         CREATE INDEX IF NOT EXISTS idx_bookings_rider_id ON bookings(rider_id);
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS reviews (
+            id TEXT PRIMARY KEY,
+            booking_id TEXT NOT NULL UNIQUE,
+            rider_id TEXT NOT NULL,
+            listing_id TEXT NOT NULL,
+            rating INTEGER NOT NULL,
+            comment TEXT,
+            created_at TEXT NOT NULL
+        );
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        CREATE INDEX IF NOT EXISTS idx_reviews_listing_id ON reviews(listing_id);
         "#,
     )
     .execute(pool)
@@ -563,5 +587,66 @@ impl BookingRepo for SqliteBookingRepo {
         .fetch_all(&self.pool)
         .await?;
         Ok(rows.into_iter().map(row_to_booking).collect())
+    }
+}
+
+pub struct SqliteReviewRepo {
+    pool: SqlitePool,
+}
+
+impl SqliteReviewRepo {
+    pub fn new(pool: SqlitePool) -> Self {
+        Self { pool }
+    }
+}
+
+fn row_to_review(r: sqlx::sqlite::SqliteRow) -> Review {
+    Review {
+        id: Uuid::parse_str(r.get::<String, _>("id").as_str()).unwrap(),
+        booking_id: Uuid::parse_str(r.get::<String, _>("booking_id").as_str()).unwrap(),
+        rider_id: Uuid::parse_str(r.get::<String, _>("rider_id").as_str()).unwrap(),
+        listing_id: Uuid::parse_str(r.get::<String, _>("listing_id").as_str()).unwrap(),
+        rating: r.get::<i64, _>("rating") as i32,
+        comment: r.get("comment"),
+        created_at: DateTime::parse_from_rfc3339(r.get::<String, _>("created_at").as_str())
+            .unwrap()
+            .with_timezone(&Utc),
+    }
+}
+
+#[async_trait]
+impl ReviewRepo for SqliteReviewRepo {
+    async fn create(&self, review: Review) -> Result<Review, AppError> {
+        sqlx::query(
+            r#"INSERT INTO reviews
+            (id, booking_id, rider_id, listing_id, rating, comment, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)"#,
+        )
+        .bind(review.id.to_string())
+        .bind(review.booking_id.to_string())
+        .bind(review.rider_id.to_string())
+        .bind(review.listing_id.to_string())
+        .bind(review.rating as i64)
+        .bind(&review.comment)
+        .bind(review.created_at.to_rfc3339())
+        .execute(&self.pool)
+        .await?;
+        Ok(review)
+    }
+
+    async fn get_by_booking(&self, booking_id: Uuid) -> Result<Option<Review>, AppError> {
+        let row = sqlx::query("SELECT * FROM reviews WHERE booking_id = ?")
+            .bind(booking_id.to_string())
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row.map(row_to_review))
+    }
+
+    async fn list_for_listing(&self, listing_id: Uuid) -> Result<Vec<Review>, AppError> {
+        let rows = sqlx::query("SELECT * FROM reviews WHERE listing_id = ?")
+            .bind(listing_id.to_string())
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(rows.into_iter().map(row_to_review).collect())
     }
 }
