@@ -26,6 +26,8 @@ async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
             name TEXT NOT NULL,
             email TEXT NOT NULL UNIQUE,
             password_hash TEXT NOT NULL DEFAULT '',
+            referral_code TEXT NOT NULL DEFAULT '',
+            referred_by TEXT,
             created_at TEXT NOT NULL
         );
         "#,
@@ -40,6 +42,8 @@ async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
             name TEXT NOT NULL,
             email TEXT NOT NULL UNIQUE,
             password_hash TEXT NOT NULL DEFAULT '',
+            referral_code TEXT NOT NULL DEFAULT '',
+            referred_by TEXT,
             created_at TEXT NOT NULL
         );
         "#,
@@ -182,12 +186,14 @@ impl SqliteOwnerRepo {
 impl OwnerRepo for SqliteOwnerRepo {
     async fn create(&self, owner: Owner) -> Result<Owner, AppError> {
         sqlx::query(
-            "INSERT INTO owners (id, name, email, password_hash, created_at) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO owners (id, name, email, password_hash, referral_code, referred_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(owner.id.to_string())
         .bind(&owner.name)
         .bind(&owner.email)
         .bind(&owner.password_hash)
+        .bind(&owner.referral_code)
+        .bind(&owner.referred_by)
         .bind(owner.created_at.to_rfc3339())
         .execute(&self.pool)
         .await?;
@@ -196,7 +202,7 @@ impl OwnerRepo for SqliteOwnerRepo {
 
     async fn get(&self, id: Uuid) -> Result<Option<Owner>, AppError> {
         let row = sqlx::query(
-            "SELECT id, name, email, password_hash, created_at FROM owners WHERE id = ?",
+            "SELECT id, name, email, password_hash, referral_code, referred_by, created_at FROM owners WHERE id = ?",
         )
         .bind(id.to_string())
         .fetch_optional(&self.pool)
@@ -207,6 +213,8 @@ impl OwnerRepo for SqliteOwnerRepo {
             name: r.get("name"),
             email: r.get("email"),
             password_hash: r.get("password_hash"),
+            referral_code: r.get("referral_code"),
+            referred_by: r.get("referred_by"),
             created_at: DateTime::parse_from_rfc3339(r.get::<String, _>("created_at").as_str())
                 .unwrap()
                 .with_timezone(&Utc),
@@ -215,7 +223,7 @@ impl OwnerRepo for SqliteOwnerRepo {
 
     async fn find_by_email(&self, email: &str) -> Result<Option<Owner>, AppError> {
         let row = sqlx::query(
-            "SELECT id, name, email, password_hash, created_at FROM owners WHERE email = ?",
+            "SELECT id, name, email, password_hash, referral_code, referred_by, created_at FROM owners WHERE email = ?",
         )
         .bind(email)
         .fetch_optional(&self.pool)
@@ -226,6 +234,29 @@ impl OwnerRepo for SqliteOwnerRepo {
             name: r.get("name"),
             email: r.get("email"),
             password_hash: r.get("password_hash"),
+            referral_code: r.get("referral_code"),
+            referred_by: r.get("referred_by"),
+            created_at: DateTime::parse_from_rfc3339(r.get::<String, _>("created_at").as_str())
+                .unwrap()
+                .with_timezone(&Utc),
+        }))
+    }
+
+    async fn find_by_referral_code(&self, code: &str) -> Result<Option<Owner>, AppError> {
+        let row = sqlx::query(
+            "SELECT id, name, email, password_hash, referral_code, referred_by, created_at FROM owners WHERE referral_code = ?",
+        )
+        .bind(code)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(|r| Owner {
+            id: Uuid::parse_str(r.get::<String, _>("id").as_str()).unwrap(),
+            name: r.get("name"),
+            email: r.get("email"),
+            password_hash: r.get("password_hash"),
+            referral_code: r.get("referral_code"),
+            referred_by: r.get("referred_by"),
             created_at: DateTime::parse_from_rfc3339(r.get::<String, _>("created_at").as_str())
                 .unwrap()
                 .with_timezone(&Utc),
@@ -247,12 +278,14 @@ impl SqliteRiderRepo {
 impl RiderRepo for SqliteRiderRepo {
     async fn create(&self, rider: Rider) -> Result<Rider, AppError> {
         sqlx::query(
-            "INSERT INTO riders (id, name, email, password_hash, created_at) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO riders (id, name, email, password_hash, referral_code, referred_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(rider.id.to_string())
         .bind(&rider.name)
         .bind(&rider.email)
         .bind(&rider.password_hash)
+        .bind(&rider.referral_code)
+        .bind(&rider.referred_by)
         .bind(rider.created_at.to_rfc3339())
         .execute(&self.pool)
         .await?;
@@ -261,7 +294,7 @@ impl RiderRepo for SqliteRiderRepo {
 
     async fn get(&self, id: Uuid) -> Result<Option<Rider>, AppError> {
         let row = sqlx::query(
-            "SELECT id, name, email, password_hash, created_at FROM riders WHERE id = ?",
+            "SELECT id, name, email, password_hash, referral_code, referred_by, created_at FROM riders WHERE id = ?",
         )
         .bind(id.to_string())
         .fetch_optional(&self.pool)
@@ -272,6 +305,8 @@ impl RiderRepo for SqliteRiderRepo {
             name: r.get("name"),
             email: r.get("email"),
             password_hash: r.get("password_hash"),
+            referral_code: r.get("referral_code"),
+            referred_by: r.get("referred_by"),
             created_at: DateTime::parse_from_rfc3339(r.get::<String, _>("created_at").as_str())
                 .unwrap()
                 .with_timezone(&Utc),
@@ -280,7 +315,7 @@ impl RiderRepo for SqliteRiderRepo {
 
     async fn find_by_email(&self, email: &str) -> Result<Option<Rider>, AppError> {
         let row = sqlx::query(
-            "SELECT id, name, email, password_hash, created_at FROM riders WHERE email = ?",
+            "SELECT id, name, email, password_hash, referral_code, referred_by, created_at FROM riders WHERE email = ?",
         )
         .bind(email)
         .fetch_optional(&self.pool)
@@ -291,6 +326,29 @@ impl RiderRepo for SqliteRiderRepo {
             name: r.get("name"),
             email: r.get("email"),
             password_hash: r.get("password_hash"),
+            referral_code: r.get("referral_code"),
+            referred_by: r.get("referred_by"),
+            created_at: DateTime::parse_from_rfc3339(r.get::<String, _>("created_at").as_str())
+                .unwrap()
+                .with_timezone(&Utc),
+        }))
+    }
+
+    async fn find_by_referral_code(&self, code: &str) -> Result<Option<Rider>, AppError> {
+        let row = sqlx::query(
+            "SELECT id, name, email, password_hash, referral_code, referred_by, created_at FROM riders WHERE referral_code = ?",
+        )
+        .bind(code)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(|r| Rider {
+            id: Uuid::parse_str(r.get::<String, _>("id").as_str()).unwrap(),
+            name: r.get("name"),
+            email: r.get("email"),
+            password_hash: r.get("password_hash"),
+            referral_code: r.get("referral_code"),
+            referred_by: r.get("referred_by"),
             created_at: DateTime::parse_from_rfc3339(r.get::<String, _>("created_at").as_str())
                 .unwrap()
                 .with_timezone(&Utc),

@@ -30,6 +30,11 @@ impl OwnerRepo for InMemoryOwnerRepo {
         let data = self.data.lock().unwrap();
         Ok(data.values().find(|o| o.email == email).cloned())
     }
+
+    async fn find_by_referral_code(&self, code: &str) -> Result<Option<Owner>, AppError> {
+        let data = self.data.lock().unwrap();
+        Ok(data.values().find(|o| o.referral_code == code).cloned())
+    }
 }
 
 #[derive(Default)]
@@ -53,6 +58,11 @@ impl RiderRepo for InMemoryRiderRepo {
     async fn find_by_email(&self, email: &str) -> Result<Option<Rider>, AppError> {
         let data = self.data.lock().unwrap();
         Ok(data.values().find(|r| r.email == email).cloned())
+    }
+
+    async fn find_by_referral_code(&self, code: &str) -> Result<Option<Rider>, AppError> {
+        let data = self.data.lock().unwrap();
+        Ok(data.values().find(|r| r.referral_code == code).cloned())
     }
 }
 

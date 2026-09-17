@@ -2184,6 +2184,7 @@ dependencies = [
  "chrono",
  "http-body-util",
  "jsonwebtoken",
+ "rand",
  "serde",
  "serde_json",
  "sqlx",

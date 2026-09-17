@@ -63,6 +63,36 @@ fn get_req_auth(uri: &str, token: &str) -> Request<Body> {
         .unwrap()
 }
 
+/// Sign up a new owner (via /auth/signup), optionally with a referral code,
+/// and return the full parsed response body alongside the owner id decoded
+/// from the JWT `sub` claim.
+async fn signup_owner_full(
+    app: &axum::Router,
+    name: &str,
+    email: &str,
+    password: &str,
+    referred_by: Option<&str>,
+) -> (String, Value) {
+    let mut payload =
+        json!({ "name": name, "email": email, "password": password, "role": "owner" });
+    if let Some(code) = referred_by {
+        payload["referred_by"] = json!(code);
+    }
+    let resp = app
+        .clone()
+        .oneshot(post_req("/auth/signup", payload))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let token = body["token"].as_str().unwrap().to_string();
+    let claims_b64 = token.split('.').nth(1).unwrap();
+    let claims_json = base64_url_decode(claims_b64);
+    let claims: Value = serde_json::from_slice(&claims_json).unwrap();
+    let owner_id = claims["sub"].as_str().unwrap().to_string();
+    (owner_id, body)
+}
+
 /// Sign up a new owner (via /auth/signup) and return (owner_id, token).
 async fn signup_owner(
     app: &axum::Router,
@@ -892,4 +922,151 @@ async fn cannot_view_another_users_booking_history() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn signup_without_referral_code_works_and_returns_own_referral_code() {
+    let app = app();
+
+    let (_, body) = signup_owner_full(
+        &app,
+        "NoRef Owner",
+        "noref-owner@example.com",
+        "pw-noref",
+        None,
+    )
+    .await;
+
+    let referral_code = body["referral_code"].as_str().unwrap();
+    assert_eq!(referral_code.len(), 8);
+    assert!(body.get("token").is_some());
+
+    // Fetch the account back and confirm it now has that referral_code and
+    // no referred_by (behaves exactly as before, plus the new field).
+    let claims_b64 = body["token"].as_str().unwrap().split('.').nth(1).unwrap();
+    let claims_json = base64_url_decode(claims_b64);
+    let claims: Value = serde_json::from_slice(&claims_json).unwrap();
+    let owner_id = claims["sub"].as_str().unwrap();
+
+    let resp = app
+        .clone()
+        .oneshot(get_req(&format!("/owners/{owner_id}")))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let owner_body = body_json(resp).await;
+    assert_eq!(owner_body["referral_code"].as_str().unwrap(), referral_code);
+    assert!(owner_body["referred_by"].is_null());
+}
+
+#[tokio::test]
+async fn signup_with_valid_referral_code_attributes_the_new_account() {
+    let app = app();
+
+    // First account signs up with no referral code, and gets a code of its own.
+    let (_, referrer_body) = signup_owner_full(
+        &app,
+        "Referrer Owner",
+        "referrer-owner@example.com",
+        "pw-referrer",
+        None,
+    )
+    .await;
+    let referrer_code = referrer_body["referral_code"].as_str().unwrap().to_string();
+
+    // Second account signs up using the first account's referral code.
+    let (referred_id, referred_body) = signup_owner_full(
+        &app,
+        "Referred Owner",
+        "referred-owner@example.com",
+        "pw-referred",
+        Some(&referrer_code),
+    )
+    .await;
+    assert!(referred_body.get("referral_code").is_some());
+
+    // Confirm the new account's referred_by matches the referrer's code.
+    let resp = app
+        .clone()
+        .oneshot(get_req(&format!("/owners/{referred_id}")))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let owner_body = body_json(resp).await;
+    assert_eq!(owner_body["referred_by"].as_str().unwrap(), referrer_code);
+}
+
+#[tokio::test]
+async fn signup_with_unknown_referral_code_still_succeeds_without_attribution() {
+    let app = app();
+
+    let (owner_id, body) = signup_owner_full(
+        &app,
+        "Garbage Ref Owner",
+        "garbage-ref-owner@example.com",
+        "pw-garbage",
+        Some("NOTAREALCODE"),
+    )
+    .await;
+
+    // Signup succeeds (200) even though the referral code doesn't exist.
+    assert!(body.get("token").is_some());
+    assert!(body.get("referral_code").is_some());
+
+    let resp = app
+        .clone()
+        .oneshot(get_req(&format!("/owners/{owner_id}")))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let owner_body = body_json(resp).await;
+    assert!(owner_body["referred_by"].is_null());
+}
+
+#[tokio::test]
+async fn rider_can_be_referred_by_an_owner_referral_code() {
+    let app = app();
+
+    // A rider referring another rider works too, and referral is checked
+    // across both owner and rider tables regardless of which role is signing up.
+    let (_, owner_body) = signup_owner_full(
+        &app,
+        "CrossRole Owner",
+        "crossrole-owner@example.com",
+        "pw-crossrole",
+        None,
+    )
+    .await;
+    let owner_code = owner_body["referral_code"].as_str().unwrap().to_string();
+
+    let resp = app
+        .clone()
+        .oneshot(post_req(
+            "/auth/signup",
+            json!({
+                "name": "CrossRole Rider",
+                "email": "crossrole-rider@example.com",
+                "password": "pw-crossrole-rider",
+                "role": "rider",
+                "referred_by": owner_code,
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let token = body["token"].as_str().unwrap();
+    let claims_b64 = token.split('.').nth(1).unwrap();
+    let claims_json = base64_url_decode(claims_b64);
+    let claims: Value = serde_json::from_slice(&claims_json).unwrap();
+    let rider_id = claims["sub"].as_str().unwrap();
+
+    let resp = app
+        .clone()
+        .oneshot(get_req(&format!("/riders/{rider_id}")))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let rider_body = body_json(resp).await;
+    assert_eq!(rider_body["referred_by"].as_str().unwrap(), owner_code);
 }
