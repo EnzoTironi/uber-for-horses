@@ -187,13 +187,18 @@ impl BookingService {
         let was_confirmed = booking.status == BookingStatus::Confirmed;
         let hold_id = booking.payment_hold_id.clone();
 
+        // Release the payment hold BEFORE persisting the Cancelled status.
+        // If release fails (e.g. the payment provider is unreachable), the
+        // booking must stay in its current state so the cancellation can be
+        // retried — persisting Cancelled first would leave the hold stuck
+        // with no legal transition left to retry the release from.
+        if let Some(hold_id) = &hold_id {
+            self.payment_gateway.release(hold_id).await?;
+        }
+
         booking.status = BookingStatus::Cancelled;
         booking.updated_at = chrono::Utc::now();
         let updated = self.booking_repo.update(booking).await?;
-
-        if let Some(hold_id) = hold_id {
-            self.payment_gateway.release(&hold_id).await?;
-        }
 
         if was_confirmed {
             if let Some(mut slot) = self
@@ -522,5 +527,41 @@ mod tests {
             .filter(|c| matches!(c, PaymentCall::Release { .. }))
             .count();
         assert_eq!(releases, 1);
+    }
+
+    #[tokio::test]
+    async fn cancel_booking_does_not_persist_cancelled_if_release_fails() {
+        // Regression test: cancel_booking must release the payment hold
+        // BEFORE persisting the Cancelled status. If it persisted Cancelled
+        // first and the release then failed, the booking would be stuck in
+        // a terminal state with money still held and no way to retry the
+        // release. Simulate a release failure by pre-releasing the hold
+        // out-of-band (double release is rejected by the mock gateway), then
+        // assert the booking is NOT left as Cancelled.
+        let f = setup().await;
+        let booking = f
+            .service
+            .request_booking(f.listing_id, f.rider_id, f.time_slot_id, None)
+            .await
+            .unwrap();
+        let hold_id = booking.payment_hold_id.clone().unwrap();
+
+        f.service
+            .confirm_booking(booking.id, f.owner_id)
+            .await
+            .unwrap();
+
+        // Pre-release the hold out-of-band so the service's own release call
+        // during cancel fails (simulating a payment-provider-side failure).
+        f.gateway.release(&hold_id).await.unwrap();
+
+        let err = f.service.cancel_booking(booking.id, f.owner_id).await;
+        assert!(err.is_err());
+
+        // The booking must still be Confirmed, not Cancelled — persisting
+        // Cancelled despite the failed release would strand the hold with
+        // no legal transition left to retry from.
+        let still_confirmed = f.service.get_booking(booking.id).await.unwrap();
+        assert_eq!(still_confirmed.status, BookingStatus::Confirmed);
     }
 }
