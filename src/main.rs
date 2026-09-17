@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use uber_for_horses::api::AppState;
+use uber_for_horses::payment::StripePaymentGateway;
 use uber_for_horses::repo::sqlite::{
     init_pool, SqliteBookingRepo, SqliteListingRepo, SqliteOwnerRepo, SqliteReviewRepo,
     SqliteRiderRepo,
@@ -27,11 +28,20 @@ async fn main() {
     let booking_repo = Arc::new(SqliteBookingRepo::new(pool.clone()));
     let review_repo = Arc::new(SqliteReviewRepo::new(pool));
 
+    let payment_gateway = Arc::new(
+        StripePaymentGateway::from_env()
+            .expect("STRIPE_SECRET_KEY must be set to run the server with real payments"),
+    );
+
     let state = AppState {
         owner_service: Arc::new(OwnerService::new(owner_repo)),
         rider_service: Arc::new(RiderService::new(rider_repo)),
         listing_service: Arc::new(ListingService::new(listing_repo.clone())),
-        booking_service: Arc::new(BookingService::new(booking_repo.clone(), listing_repo)),
+        booking_service: Arc::new(BookingService::new(
+            booking_repo.clone(),
+            listing_repo,
+            payment_gateway,
+        )),
         review_service: Arc::new(ReviewService::new(review_repo, booking_repo)),
     };
 
