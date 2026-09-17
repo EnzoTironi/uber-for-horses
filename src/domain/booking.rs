@@ -39,6 +39,7 @@ pub struct Booking {
     pub status: BookingStatus,
     pub total_price_cents: i64,
     pub message_from_rider: Option<String>,
+    pub payment_hold_id: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -60,6 +61,7 @@ impl Booking {
             status: BookingStatus::Requested,
             total_price_cents,
             message_from_rider,
+            payment_hold_id: None,
             created_at: now,
             updated_at: now,
         }
