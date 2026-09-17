@@ -4,9 +4,9 @@ use std::sync::Mutex;
 use async_trait::async_trait;
 use uuid::Uuid;
 
-use crate::domain::{Booking, Listing, Owner, Rider, TimeSlot};
+use crate::domain::{Booking, Listing, Owner, Review, Rider, TimeSlot};
 use crate::error::AppError;
-use crate::repo::traits::{BookingRepo, ListingRepo, OwnerRepo, RiderRepo};
+use crate::repo::traits::{BookingRepo, ListingRepo, OwnerRepo, ReviewRepo, RiderRepo};
 
 #[derive(Default)]
 pub struct InMemoryOwnerRepo {
@@ -24,6 +24,16 @@ impl OwnerRepo for InMemoryOwnerRepo {
     async fn get(&self, id: Uuid) -> Result<Option<Owner>, AppError> {
         let data = self.data.lock().unwrap();
         Ok(data.get(&id).cloned())
+    }
+
+    async fn find_by_email(&self, email: &str) -> Result<Option<Owner>, AppError> {
+        let data = self.data.lock().unwrap();
+        Ok(data.values().find(|o| o.email == email).cloned())
+    }
+
+    async fn find_by_referral_code(&self, code: &str) -> Result<Option<Owner>, AppError> {
+        let data = self.data.lock().unwrap();
+        Ok(data.values().find(|o| o.referral_code == code).cloned())
     }
 }
 
@@ -43,6 +53,16 @@ impl RiderRepo for InMemoryRiderRepo {
     async fn get(&self, id: Uuid) -> Result<Option<Rider>, AppError> {
         let data = self.data.lock().unwrap();
         Ok(data.get(&id).cloned())
+    }
+
+    async fn find_by_email(&self, email: &str) -> Result<Option<Rider>, AppError> {
+        let data = self.data.lock().unwrap();
+        Ok(data.values().find(|r| r.email == email).cloned())
+    }
+
+    async fn find_by_referral_code(&self, code: &str) -> Result<Option<Rider>, AppError> {
+        let data = self.data.lock().unwrap();
+        Ok(data.values().find(|r| r.referral_code == code).cloned())
     }
 }
 
@@ -140,5 +160,33 @@ impl BookingRepo for InMemoryBookingRepo {
         let _ = owner_id;
         let data = self.data.lock().unwrap();
         Ok(data.values().cloned().collect())
+    }
+}
+
+#[derive(Default)]
+pub struct InMemoryReviewRepo {
+    data: Mutex<HashMap<Uuid, Review>>,
+}
+
+#[async_trait]
+impl ReviewRepo for InMemoryReviewRepo {
+    async fn create(&self, review: Review) -> Result<Review, AppError> {
+        let mut data = self.data.lock().unwrap();
+        data.insert(review.id, review.clone());
+        Ok(review)
+    }
+
+    async fn get_by_booking(&self, booking_id: Uuid) -> Result<Option<Review>, AppError> {
+        let data = self.data.lock().unwrap();
+        Ok(data.values().find(|r| r.booking_id == booking_id).cloned())
+    }
+
+    async fn list_for_listing(&self, listing_id: Uuid) -> Result<Vec<Review>, AppError> {
+        let data = self.data.lock().unwrap();
+        Ok(data
+            .values()
+            .filter(|r| r.listing_id == listing_id)
+            .cloned()
+            .collect())
     }
 }

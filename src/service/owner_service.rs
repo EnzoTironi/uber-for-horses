@@ -13,15 +13,31 @@ impl OwnerService {
         Self { repo }
     }
 
-    pub async fn create_owner(&self, name: String, email: String) -> Result<Owner, AppError> {
+    pub async fn create_owner(
+        &self,
+        name: String,
+        email: String,
+        password: String,
+        referred_by: Option<String>,
+    ) -> Result<Owner, AppError> {
         if name.trim().is_empty() {
             return Err(AppError::Validation("name must not be empty".into()));
         }
         if email.trim().is_empty() || !email.contains('@') {
             return Err(AppError::Validation("email must be a valid address".into()));
         }
-        let owner = Owner::new(name, email);
+        let password_hash = bcrypt::hash(password, bcrypt::DEFAULT_COST)
+            .map_err(|e| AppError::Internal(format!("failed to hash password: {e}")))?;
+        let owner = Owner::new(name, email, password_hash, referred_by);
         self.repo.create(owner).await
+    }
+
+    pub async fn find_by_email(&self, email: &str) -> Result<Option<Owner>, AppError> {
+        self.repo.find_by_email(email).await
+    }
+
+    pub async fn find_by_referral_code(&self, code: &str) -> Result<Option<Owner>, AppError> {
+        self.repo.find_by_referral_code(code).await
     }
 
     pub async fn get_owner(&self, id: uuid::Uuid) -> Result<Owner, AppError> {

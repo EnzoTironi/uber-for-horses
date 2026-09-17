@@ -4,9 +4,9 @@ use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::{Row, SqlitePool};
 use uuid::Uuid;
 
-use crate::domain::{AnimalKind, Booking, BookingStatus, Listing, Owner, Rider, TimeSlot};
+use crate::domain::{AnimalKind, Booking, BookingStatus, Listing, Owner, Review, Rider, TimeSlot};
 use crate::error::AppError;
-use crate::repo::traits::{BookingRepo, ListingRepo, OwnerRepo, RiderRepo};
+use crate::repo::traits::{BookingRepo, ListingRepo, OwnerRepo, ReviewRepo, RiderRepo};
 
 pub async fn init_pool(database_url: &str) -> Result<SqlitePool, sqlx::Error> {
     // SQLite has a single writer; 10 connections balances read concurrency without excessive contention.
@@ -24,7 +24,10 @@ async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         CREATE TABLE IF NOT EXISTS owners (
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
-            email TEXT NOT NULL,
+            email TEXT NOT NULL UNIQUE,
+            password_hash TEXT NOT NULL DEFAULT '',
+            referral_code TEXT NOT NULL DEFAULT '',
+            referred_by TEXT,
             created_at TEXT NOT NULL
         );
         "#,
@@ -37,7 +40,10 @@ async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         CREATE TABLE IF NOT EXISTS riders (
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
-            email TEXT NOT NULL,
+            email TEXT NOT NULL UNIQUE,
+            password_hash TEXT NOT NULL DEFAULT '',
+            referral_code TEXT NOT NULL DEFAULT '',
+            referred_by TEXT,
             created_at TEXT NOT NULL
         );
         "#,
@@ -129,6 +135,30 @@ async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     .execute(pool)
     .await?;
 
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS reviews (
+            id TEXT PRIMARY KEY,
+            booking_id TEXT NOT NULL UNIQUE,
+            rider_id TEXT NOT NULL,
+            listing_id TEXT NOT NULL,
+            rating INTEGER NOT NULL,
+            comment TEXT,
+            created_at TEXT NOT NULL
+        );
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        CREATE INDEX IF NOT EXISTS idx_reviews_listing_id ON reviews(listing_id);
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
     Ok(())
 }
 
@@ -179,26 +209,78 @@ impl SqliteOwnerRepo {
 #[async_trait]
 impl OwnerRepo for SqliteOwnerRepo {
     async fn create(&self, owner: Owner) -> Result<Owner, AppError> {
-        sqlx::query("INSERT INTO owners (id, name, email, created_at) VALUES (?, ?, ?, ?)")
-            .bind(owner.id.to_string())
-            .bind(&owner.name)
-            .bind(&owner.email)
-            .bind(owner.created_at.to_rfc3339())
-            .execute(&self.pool)
-            .await?;
+        sqlx::query(
+            "INSERT INTO owners (id, name, email, password_hash, referral_code, referred_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(owner.id.to_string())
+        .bind(&owner.name)
+        .bind(&owner.email)
+        .bind(&owner.password_hash)
+        .bind(&owner.referral_code)
+        .bind(&owner.referred_by)
+        .bind(owner.created_at.to_rfc3339())
+        .execute(&self.pool)
+        .await?;
         Ok(owner)
     }
 
     async fn get(&self, id: Uuid) -> Result<Option<Owner>, AppError> {
-        let row = sqlx::query("SELECT id, name, email, created_at FROM owners WHERE id = ?")
-            .bind(id.to_string())
-            .fetch_optional(&self.pool)
-            .await?;
+        let row = sqlx::query(
+            "SELECT id, name, email, password_hash, referral_code, referred_by, created_at FROM owners WHERE id = ?",
+        )
+        .bind(id.to_string())
+        .fetch_optional(&self.pool)
+        .await?;
 
         Ok(row.map(|r| Owner {
             id: Uuid::parse_str(r.get::<String, _>("id").as_str()).unwrap(),
             name: r.get("name"),
             email: r.get("email"),
+            password_hash: r.get("password_hash"),
+            referral_code: r.get("referral_code"),
+            referred_by: r.get("referred_by"),
+            created_at: DateTime::parse_from_rfc3339(r.get::<String, _>("created_at").as_str())
+                .unwrap()
+                .with_timezone(&Utc),
+        }))
+    }
+
+    async fn find_by_email(&self, email: &str) -> Result<Option<Owner>, AppError> {
+        let row = sqlx::query(
+            "SELECT id, name, email, password_hash, referral_code, referred_by, created_at FROM owners WHERE email = ?",
+        )
+        .bind(email)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(|r| Owner {
+            id: Uuid::parse_str(r.get::<String, _>("id").as_str()).unwrap(),
+            name: r.get("name"),
+            email: r.get("email"),
+            password_hash: r.get("password_hash"),
+            referral_code: r.get("referral_code"),
+            referred_by: r.get("referred_by"),
+            created_at: DateTime::parse_from_rfc3339(r.get::<String, _>("created_at").as_str())
+                .unwrap()
+                .with_timezone(&Utc),
+        }))
+    }
+
+    async fn find_by_referral_code(&self, code: &str) -> Result<Option<Owner>, AppError> {
+        let row = sqlx::query(
+            "SELECT id, name, email, password_hash, referral_code, referred_by, created_at FROM owners WHERE referral_code = ?",
+        )
+        .bind(code)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(|r| Owner {
+            id: Uuid::parse_str(r.get::<String, _>("id").as_str()).unwrap(),
+            name: r.get("name"),
+            email: r.get("email"),
+            password_hash: r.get("password_hash"),
+            referral_code: r.get("referral_code"),
+            referred_by: r.get("referred_by"),
             created_at: DateTime::parse_from_rfc3339(r.get::<String, _>("created_at").as_str())
                 .unwrap()
                 .with_timezone(&Utc),
@@ -219,26 +301,78 @@ impl SqliteRiderRepo {
 #[async_trait]
 impl RiderRepo for SqliteRiderRepo {
     async fn create(&self, rider: Rider) -> Result<Rider, AppError> {
-        sqlx::query("INSERT INTO riders (id, name, email, created_at) VALUES (?, ?, ?, ?)")
-            .bind(rider.id.to_string())
-            .bind(&rider.name)
-            .bind(&rider.email)
-            .bind(rider.created_at.to_rfc3339())
-            .execute(&self.pool)
-            .await?;
+        sqlx::query(
+            "INSERT INTO riders (id, name, email, password_hash, referral_code, referred_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(rider.id.to_string())
+        .bind(&rider.name)
+        .bind(&rider.email)
+        .bind(&rider.password_hash)
+        .bind(&rider.referral_code)
+        .bind(&rider.referred_by)
+        .bind(rider.created_at.to_rfc3339())
+        .execute(&self.pool)
+        .await?;
         Ok(rider)
     }
 
     async fn get(&self, id: Uuid) -> Result<Option<Rider>, AppError> {
-        let row = sqlx::query("SELECT id, name, email, created_at FROM riders WHERE id = ?")
-            .bind(id.to_string())
-            .fetch_optional(&self.pool)
-            .await?;
+        let row = sqlx::query(
+            "SELECT id, name, email, password_hash, referral_code, referred_by, created_at FROM riders WHERE id = ?",
+        )
+        .bind(id.to_string())
+        .fetch_optional(&self.pool)
+        .await?;
 
         Ok(row.map(|r| Rider {
             id: Uuid::parse_str(r.get::<String, _>("id").as_str()).unwrap(),
             name: r.get("name"),
             email: r.get("email"),
+            password_hash: r.get("password_hash"),
+            referral_code: r.get("referral_code"),
+            referred_by: r.get("referred_by"),
+            created_at: DateTime::parse_from_rfc3339(r.get::<String, _>("created_at").as_str())
+                .unwrap()
+                .with_timezone(&Utc),
+        }))
+    }
+
+    async fn find_by_email(&self, email: &str) -> Result<Option<Rider>, AppError> {
+        let row = sqlx::query(
+            "SELECT id, name, email, password_hash, referral_code, referred_by, created_at FROM riders WHERE email = ?",
+        )
+        .bind(email)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(|r| Rider {
+            id: Uuid::parse_str(r.get::<String, _>("id").as_str()).unwrap(),
+            name: r.get("name"),
+            email: r.get("email"),
+            password_hash: r.get("password_hash"),
+            referral_code: r.get("referral_code"),
+            referred_by: r.get("referred_by"),
+            created_at: DateTime::parse_from_rfc3339(r.get::<String, _>("created_at").as_str())
+                .unwrap()
+                .with_timezone(&Utc),
+        }))
+    }
+
+    async fn find_by_referral_code(&self, code: &str) -> Result<Option<Rider>, AppError> {
+        let row = sqlx::query(
+            "SELECT id, name, email, password_hash, referral_code, referred_by, created_at FROM riders WHERE referral_code = ?",
+        )
+        .bind(code)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(|r| Rider {
+            id: Uuid::parse_str(r.get::<String, _>("id").as_str()).unwrap(),
+            name: r.get("name"),
+            email: r.get("email"),
+            password_hash: r.get("password_hash"),
+            referral_code: r.get("referral_code"),
+            referred_by: r.get("referred_by"),
             created_at: DateTime::parse_from_rfc3339(r.get::<String, _>("created_at").as_str())
                 .unwrap()
                 .with_timezone(&Utc),
@@ -453,5 +587,66 @@ impl BookingRepo for SqliteBookingRepo {
         .fetch_all(&self.pool)
         .await?;
         Ok(rows.into_iter().map(row_to_booking).collect())
+    }
+}
+
+pub struct SqliteReviewRepo {
+    pool: SqlitePool,
+}
+
+impl SqliteReviewRepo {
+    pub fn new(pool: SqlitePool) -> Self {
+        Self { pool }
+    }
+}
+
+fn row_to_review(r: sqlx::sqlite::SqliteRow) -> Review {
+    Review {
+        id: Uuid::parse_str(r.get::<String, _>("id").as_str()).unwrap(),
+        booking_id: Uuid::parse_str(r.get::<String, _>("booking_id").as_str()).unwrap(),
+        rider_id: Uuid::parse_str(r.get::<String, _>("rider_id").as_str()).unwrap(),
+        listing_id: Uuid::parse_str(r.get::<String, _>("listing_id").as_str()).unwrap(),
+        rating: r.get::<i64, _>("rating") as i32,
+        comment: r.get("comment"),
+        created_at: DateTime::parse_from_rfc3339(r.get::<String, _>("created_at").as_str())
+            .unwrap()
+            .with_timezone(&Utc),
+    }
+}
+
+#[async_trait]
+impl ReviewRepo for SqliteReviewRepo {
+    async fn create(&self, review: Review) -> Result<Review, AppError> {
+        sqlx::query(
+            r#"INSERT INTO reviews
+            (id, booking_id, rider_id, listing_id, rating, comment, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)"#,
+        )
+        .bind(review.id.to_string())
+        .bind(review.booking_id.to_string())
+        .bind(review.rider_id.to_string())
+        .bind(review.listing_id.to_string())
+        .bind(review.rating as i64)
+        .bind(&review.comment)
+        .bind(review.created_at.to_rfc3339())
+        .execute(&self.pool)
+        .await?;
+        Ok(review)
+    }
+
+    async fn get_by_booking(&self, booking_id: Uuid) -> Result<Option<Review>, AppError> {
+        let row = sqlx::query("SELECT * FROM reviews WHERE booking_id = ?")
+            .bind(booking_id.to_string())
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row.map(row_to_review))
+    }
+
+    async fn list_for_listing(&self, listing_id: Uuid) -> Result<Vec<Review>, AppError> {
+        let rows = sqlx::query("SELECT * FROM reviews WHERE listing_id = ?")
+            .bind(listing_id.to_string())
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(rows.into_iter().map(row_to_review).collect())
     }
 }
