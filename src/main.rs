@@ -2,9 +2,12 @@ use std::sync::Arc;
 
 use uber_for_horses::api::AppState;
 use uber_for_horses::repo::sqlite::{
-    init_pool, SqliteBookingRepo, SqliteListingRepo, SqliteOwnerRepo, SqliteRiderRepo,
+    init_pool, SqliteBookingRepo, SqliteListingRepo, SqliteOwnerRepo, SqliteReviewRepo,
+    SqliteRiderRepo,
 };
-use uber_for_horses::service::{BookingService, ListingService, OwnerService, RiderService};
+use uber_for_horses::service::{
+    BookingService, ListingService, OwnerService, ReviewService, RiderService,
+};
 
 #[tokio::main]
 async fn main() {
@@ -21,13 +24,15 @@ async fn main() {
     let owner_repo = Arc::new(SqliteOwnerRepo::new(pool.clone()));
     let rider_repo = Arc::new(SqliteRiderRepo::new(pool.clone()));
     let listing_repo = Arc::new(SqliteListingRepo::new(pool.clone()));
-    let booking_repo = Arc::new(SqliteBookingRepo::new(pool));
+    let booking_repo = Arc::new(SqliteBookingRepo::new(pool.clone()));
+    let review_repo = Arc::new(SqliteReviewRepo::new(pool));
 
     let state = AppState {
         owner_service: Arc::new(OwnerService::new(owner_repo)),
         rider_service: Arc::new(RiderService::new(rider_repo)),
         listing_service: Arc::new(ListingService::new(listing_repo.clone())),
-        booking_service: Arc::new(BookingService::new(booking_repo, listing_repo)),
+        booking_service: Arc::new(BookingService::new(booking_repo.clone(), listing_repo)),
+        review_service: Arc::new(ReviewService::new(review_repo, booking_repo)),
     };
 
     let app = uber_for_horses::api::router(state);
