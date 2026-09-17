@@ -9,6 +9,7 @@ pub trait OwnerRepo: Send + Sync {
     async fn create(&self, owner: Owner) -> Result<Owner, AppError>;
     async fn get(&self, id: Uuid) -> Result<Option<Owner>, AppError>;
     async fn find_by_email(&self, email: &str) -> Result<Option<Owner>, AppError>;
+    async fn find_by_referral_code(&self, code: &str) -> Result<Option<Owner>, AppError>;
 }
 
 #[async_trait]
@@ -16,6 +17,7 @@ pub trait RiderRepo: Send + Sync {
     async fn create(&self, rider: Rider) -> Result<Rider, AppError>;
     async fn get(&self, id: Uuid) -> Result<Option<Rider>, AppError>;
     async fn find_by_email(&self, email: &str) -> Result<Option<Rider>, AppError>;
+    async fn find_by_referral_code(&self, code: &str) -> Result<Option<Rider>, AppError>;
 }
 
 #[async_trait]

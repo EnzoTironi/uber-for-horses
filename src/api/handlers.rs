@@ -56,36 +56,62 @@ struct SignupRequest {
     email: String,
     password: String,
     role: Role,
+    #[serde(default)]
+    referred_by: Option<String>,
 }
 
 #[derive(Serialize)]
 struct TokenResponse {
     token: String,
+    referral_code: String,
 }
 
 async fn signup(
     State(state): State<AppState>,
     Json(req): Json<SignupRequest>,
 ) -> Result<Json<TokenResponse>, AppError> {
-    let (id, role) = match req.role {
+    // If a referral code was supplied, resolve it to an existing account's
+    // code. An unknown/garbage code is not an error — it is simply ignored,
+    // and the new account is created without attribution.
+    let referred_by = if let Some(code) = req.referred_by.as_deref() {
+        let code = code.trim();
+        if code.is_empty() {
+            None
+        } else {
+            let owner_match = state.owner_service.find_by_referral_code(code).await?;
+            if owner_match.is_some() {
+                Some(code.to_string())
+            } else {
+                let rider_match = state.rider_service.find_by_referral_code(code).await?;
+                rider_match.map(|_| code.to_string())
+            }
+        }
+    } else {
+        None
+    };
+
+    let (id, role, referral_code) = match req.role {
         Role::Owner => {
             let owner = state
                 .owner_service
-                .create_owner(req.name, req.email, req.password)
+                .create_owner(req.name, req.email, req.password, referred_by)
                 .await?;
-            (owner.id, Role::Owner)
+            (owner.id, Role::Owner, owner.referral_code)
         }
         Role::Rider => {
             let rider = state
                 .rider_service
-                .create_rider(req.name, req.email, req.password)
+                .create_rider(req.name, req.email, req.password, referred_by)
                 .await?;
-            (rider.id, Role::Rider)
+            (rider.id, Role::Rider, rider.referral_code)
         }
     };
 
     let token = jwt::issue_token(id, role)?;
-    Ok(Json(TokenResponse { token }))
+    Ok(Json(TokenResponse {
+        token,
+        referral_code,
+    }))
 }
 
 #[derive(Deserialize)]
@@ -99,14 +125,19 @@ async fn login(
     State(state): State<AppState>,
     Json(req): Json<LoginRequest>,
 ) -> Result<Json<TokenResponse>, AppError> {
-    let (id, password_hash, role) = match req.role {
+    let (id, password_hash, role, referral_code) = match req.role {
         Role::Owner => {
             let owner = state
                 .owner_service
                 .find_by_email(&req.email)
                 .await?
                 .ok_or_else(|| AppError::Unauthorized("invalid email or password".into()))?;
-            (owner.id, owner.password_hash, Role::Owner)
+            (
+                owner.id,
+                owner.password_hash,
+                Role::Owner,
+                owner.referral_code,
+            )
         }
         Role::Rider => {
             let rider = state
@@ -114,7 +145,12 @@ async fn login(
                 .find_by_email(&req.email)
                 .await?
                 .ok_or_else(|| AppError::Unauthorized("invalid email or password".into()))?;
-            (rider.id, rider.password_hash, Role::Rider)
+            (
+                rider.id,
+                rider.password_hash,
+                Role::Rider,
+                rider.referral_code,
+            )
         }
     };
 
@@ -125,7 +161,10 @@ async fn login(
     }
 
     let token = jwt::issue_token(id, role)?;
-    Ok(Json(TokenResponse { token }))
+    Ok(Json(TokenResponse {
+        token,
+        referral_code,
+    }))
 }
 
 // ---------- Owners ----------
@@ -143,7 +182,7 @@ async fn create_owner(
 ) -> Result<Json<serde_json::Value>, AppError> {
     let owner = state
         .owner_service
-        .create_owner(req.name, req.email, req.password)
+        .create_owner(req.name, req.email, req.password, None)
         .await?;
     Ok(Json(serde_json::to_value(owner).unwrap()))
 }
@@ -171,7 +210,7 @@ async fn create_rider(
 ) -> Result<Json<serde_json::Value>, AppError> {
     let rider = state
         .rider_service
-        .create_rider(req.name, req.email, req.password)
+        .create_rider(req.name, req.email, req.password, None)
         .await?;
     Ok(Json(serde_json::to_value(rider).unwrap()))
 }
